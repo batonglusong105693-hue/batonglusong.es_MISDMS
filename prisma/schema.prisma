@@ -1,0 +1,716 @@
+// Prisma schema for Batong Lusong Elementary School DMS-MIS
+// Generated for PostgreSQL (Supabase)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Role {
+  SUPER_ADMIN
+  PRINCIPAL
+  ADMIN_OFFICER
+  ADMIN_SUPPORT
+  TEACHER
+  ADVISER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum GradeLevel {
+  KINDERGARTEN
+  GRADE_1
+  GRADE_2
+  GRADE_3
+  GRADE_4
+  GRADE_5
+  GRADE_6
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum StudentStatus {
+  ENROLLED
+  TRANSFERRED_OUT
+  DROPPED_OUT
+  GRADUATED
+  ALUMNI
+}
+
+enum EnrollmentStatus {
+  PENDING
+  ENROLLED
+  TRANSFERRED
+  DROPPED
+  COMPLETED
+}
+
+enum SectionType {
+  REGULAR
+  SPED
+  MULTIGRADE
+}
+
+enum DocumentCategory {
+  ADMINISTRATIVE_ISSUANCE
+  DEPED_ORDER
+  DEPED_MEMORANDUM
+  STUDENT_RECORD
+  FINANCIAL_MOOE
+  PROCUREMENT
+  INVENTORY
+  LESSON_PLAN
+  SCHOOL_FORM
+  CORRESPONDENCE
+  MISCELLANEOUS
+}
+
+enum DocumentStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  ARCHIVED
+  RELEASED
+  REJECTED
+}
+
+enum DocumentAction {
+  CREATED
+  UPLOADED
+  UPDATED
+  REVIEWED
+  APPROVED
+  REJECTED
+  ARCHIVED
+  RELEASED
+  DOWNLOADED
+  VIEWED
+  DELETED
+  ROUTED
+}
+
+enum Quarter {
+  FIRST
+  SECOND
+  THIRD
+  FOURTH
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum GradeWorkflowStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  POSTED
+  FINALIZED
+}
+
+enum SchoolFormType {
+  SF1
+  SF2
+  SF5
+  SF6
+  SF9
+  SF10
+}
+
+// ============================================
+// AUTH & USERS
+// ============================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model User {
+  id            String          @id @default(cuid())
+  name          String
+  email         String          @unique
+  emailVerified DateTime?
+  image         String?
+  password      String? // Hashed with bcrypt (null for OAuth users)
+  role          Role            @default(ADMIN_SUPPORT)
+  department    String?
+  position      String?
+  employeeNumber String?
+  status        UserStatus      @default(ACTIVE)
+  phoneNumber   String?
+  address       String?
+  bio           String?
+
+  // Relations
+  accounts         Account[]
+  sessions         Session[]
+  auditLogs        AuditLog[]         @relation("UserAuditLogs")
+  uploadedDocuments Document[]        @relation("DocumentUploader")
+  documentActions  DocumentAuditLog[] @relation("DocumentActionPerformer")
+  teachingLoads    TeachingLoad[]
+  advisories       Section[]         @relation("SectionAdviser")
+  createdStudents  Student[]         @relation("StudentCreatedBy")
+  updatedStudents  Student[]         @relation("StudentUpdatedBy")
+  enrollments      Enrollment[]      @relation("EnrollmentCreatedBy")
+  recordedAttendances AttendanceRecord[] @relation("AttendanceRecordedBy")
+  createdDocuments Document[]        @relation("DocumentCreatedBy")
+  releaseLogs      DocumentReleaseLog[]
+  receivedDocuments DocumentRouteLog[] @relation("RouteReceiver")
+  routingsInitiated DocumentRouteLog[] @relation("RouteInitiator")
+  generatedForms   SchoolForm[]      @relation("SchoolFormGenerator")
+  announcements    Announcement[]
+  uploadedFiles    UploadedFile[]   @relation("FileUploader")
+  sentNotifications Notification[]  @relation("NotificationSender")
+  updatedSettings  SystemSetting[]  @relation("SettingUpdater")
+  createdGrades    Grade[]          @relation("GradeCreator")
+  gradeWorkflowLogs GradeWorkflowLog[] @relation("GradeWorkflowActor")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+  @@index([status])
+}
+
+// ============================================
+// STUDENT & ACADEMIC
+// ============================================
+
+model Student {
+  id            String      @id @default(cuid())
+  lrn           String      @unique // Learner Reference Number (12 digits)
+  firstName     String
+  middleName    String?
+  lastName      String
+  extensionName String? // Jr., Sr., III, etc.
+  gender        Gender
+  birthDate     DateTime
+  birthPlace    String?
+  nationality   String      @default("Filipino")
+  religion      String?
+  address       String
+  barangay      String?
+  city          String?
+  province      String?
+  zipCode       String?
+
+  // DepEd-specific fields
+  motherTongue  String?
+  indigenousGroup     String?  // IP affiliation
+  is4PsBeneficiary    Boolean  @default(false)
+  isLWD               Boolean  @default(false) // Learners with Disabilities
+  isCCT               Boolean  @default(false) // Conditional Cash Transfer
+  bloodType     String?
+
+  // Parent/Guardian info
+  fatherName    String?
+  fatherOccupation String?
+  motherName    String?
+  motherOccupation String?
+  guardianName  String?
+  guardianRelationship String?
+  guardianContact String?
+  guardianAddress String?
+
+  // Emergency contact
+  emergencyContactName  String?
+  emergencyContactNumber String?
+  emergencyContactRelation String?
+  email         String?
+  metadata      Json?
+
+  // Status
+  status        StudentStatus @default(ENROLLED)
+
+  // Relations
+  enrollments   Enrollment[]
+  createdBy     User?         @relation("StudentCreatedBy", fields: [createdById], references: [id])
+  createdById   String?
+  updatedBy     User?         @relation("StudentUpdatedBy", fields: [updatedById], references: [id])
+  updatedById   String?
+  attendanceRecords AttendanceRecord[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([lrn])
+  @@index([lastName, firstName])
+  @@index([status])
+  @@index([gender])
+}
+
+model AcademicYear {
+  id        String   @id @default(cuid())
+  year      String   @unique // e.g., "2025-2026"
+  isCurrent Boolean  @default(false)
+  startDate DateTime?
+  endDate   DateTime?
+
+  // Relations
+  sections   Section[]
+  enrollments Enrollment[]
+  schoolForms SchoolForm[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isCurrent])
+}
+
+model Section {
+  id             String      @id @default(cuid())
+  name           String // e.g., "Mabini", "Rizal", "Sampaguita"
+  gradeLevel     GradeLevel
+  type           SectionType @default(REGULAR)
+  roomNumber     String?
+  capacity       Int         @default(40)
+  adviserId      String?
+  adviser        User?       @relation("SectionAdviser", fields: [adviserId], references: [id])
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  // Relations
+  enrollments    Enrollment[]
+  teachingLoads  TeachingLoad[]
+  schoolForms    SchoolForm[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, gradeLevel, academicYearId])
+  @@index([gradeLevel])
+  @@index([academicYearId])
+}
+
+model Enrollment {
+  id            String          @id @default(cuid())
+  studentId     String
+  student       Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sectionId     String?
+  section       Section?        @relation(fields: [sectionId], references: [id])
+  academicYearId String
+  academicYear  AcademicYear    @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  status        EnrollmentStatus @default(ENROLLED)
+  dateEnrolled  DateTime        @default(now())
+  remarks       String?
+  isTransferee  Boolean         @default(false)
+  previousSchool String?
+  createdBy     User?           @relation("EnrollmentCreatedBy", fields: [createdById], references: [id])
+  createdById   String?
+
+  // Relations
+  grades        Grade[]
+  attendanceRecords AttendanceRecord[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, academicYearId])
+  @@index([sectionId])
+  @@index([academicYearId])
+  @@index([status])
+}
+
+model Subject {
+  id          String    @id @default(cuid())
+  name        String
+  shortName   String?
+  gradeLevel  GradeLevel
+  isCore      Boolean   @default(true)
+  order       Int       @default(0)
+
+  // Relations
+  grades      Grade[]
+  teachingLoads TeachingLoad[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([name, gradeLevel])
+  @@index([gradeLevel])
+}
+
+// DepEd Grading: Written Works (WW), Performance Tasks (PT), Periodic Test (PT)
+model Grade {
+  id             String     @id @default(cuid())
+  enrollmentId   String
+  enrollment     Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  subjectId      String
+  subject        Subject    @relation(fields: [subjectId], references: [id])
+
+  // Quarterly scores (0-100)
+  // Q1
+  q1WrittenWork  Float?
+  q1PerformanceTask Float?
+  q1PeriodicTest Float?
+  q1Grade        Float? // Computed: 30% WW + 50% PT + 20% Periodic Test (for Grade 1-10)
+  // Q2
+  q2WrittenWork  Float?
+  q2PerformanceTask Float?
+  q2PeriodicTest Float?
+  q2Grade        Float?
+  // Q3
+  q3WrittenWork  Float?
+  q3PerformanceTask Float?
+  q3PeriodicTest Float?
+  q3Grade        Float?
+  // Q4
+  q4WrittenWork  Float?
+  q4PerformanceTask Float?
+  q4PeriodicTest Float?
+  q4Grade        Float?
+
+  firstFinalGrade  Float?
+  secondFinalGrade Float?
+  thirdFinalGrade  Float?
+  fourthFinalGrade Float?
+  q1FinalGrade     Float?
+  q2FinalGrade     Float?
+  q3FinalGrade     Float?
+  q4FinalGrade     Float?
+
+  finalGrade     Float? // Average of Q1-Q4
+  remarks        String? // Passed/Failed
+  submittedById  String?
+  submittedAt    DateTime?
+  workflowStatus GradeWorkflowStatus @default(DRAFT)
+  postedAt       DateTime?
+  finalizedAt    DateTime?
+  createdById    String?
+  createdBy      User? @relation("GradeCreator", fields: [createdById], references: [id])
+  workflowLogs   GradeWorkflowLog[]
+  locked         Boolean    @default(false)
+
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([enrollmentId, subjectId])
+  @@index([enrollmentId])
+  @@index([subjectId])
+}
+
+model TeachingLoad {
+  id          String    @id @default(cuid())
+  teacherId   String
+  teacher     User      @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  sectionId   String
+  section     Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  subjectId   String
+  subject     Subject   @relation(fields: [subjectId], references: [id])
+  timeSlot    String?
+  day         String?
+  room        String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([teacherId, sectionId, subjectId])
+  @@index([teacherId])
+  @@index([sectionId])
+}
+
+model AttendanceRecord {
+  id           String    @id @default(cuid())
+  studentId    String
+  student      Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  date         DateTime
+  status       AttendanceStatus
+  quarter      Quarter
+  remarks      String?
+  recordedById String?
+  recordedBy   User?     @relation("AttendanceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([enrollmentId, date, quarter])
+  @@index([enrollmentId])
+  @@index([date])
+  @@index([studentId])
+}
+
+// ============================================
+// DOCUMENT MANAGEMENT SYSTEM
+// ============================================
+
+model Document {
+  id             String           @id @default(cuid())
+  title          String
+  description    String?
+  fileUrl        String?          // Path to stored file
+  fileType       String?          // PDF, PNG, JPG, DOCX
+  fileSize       Int?             // In bytes
+  fileName       String?
+  category       DocumentCategory
+  status         DocumentStatus   @default(PENDING_REVIEW)
+  tags           Json?            // Array of tags: ["urgent", "official", "2025"]
+  metadata       Json?            // Flexible metadata: {dateReceived, sender, actionTaken, etc.}
+  version        Int              @default(1)
+  isConfidential Boolean          @default(false)
+  referenceNumber String?         // e.g., "DO-2025-001"
+  dateReceived   DateTime?
+  sender         String?
+  recipient      String?
+  actionTaken    String?
+  dueDate        DateTime?
+
+  // Relations
+  uploadedBy     User?            @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  uploadedById   String?
+  createdBy      User?            @relation("DocumentCreatedBy", fields: [createdById], references: [id])
+  createdById    String?
+  auditLogs      DocumentAuditLog[]
+  versions       DocumentVersion[]
+  routeLogs      DocumentRouteLog[]
+  releaseLogs    DocumentReleaseLog[]
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([referenceNumber])
+  @@index([createdAt])
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version     Int
+  fileUrl     String
+  fileSize    Int?
+  changes     String?
+  uploadedById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([documentId, version])
+  @@index([documentId])
+}
+
+model DocumentAuditLog {
+  id            String         @id @default(cuid())
+  documentId    String
+  document      Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  action        DocumentAction
+  performedById String?
+  performedBy   User?          @relation("DocumentActionPerformer", fields: [performedById], references: [id])
+  details       String?
+  ipAddress     String?
+  timestamp     DateTime       @default(now())
+
+  @@index([documentId])
+  @@index([performedById])
+  @@index([timestamp])
+}
+
+model DocumentRouteLog {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fromUserId   String?
+  fromUser     User?    @relation("RouteInitiator", fields: [fromUserId], references: [id])
+  toUserId     String
+  toUser       User?    @relation("RouteReceiver", fields: [toUserId], references: [id])
+  action       String // ROUTED, RECEIVED, ACTION_TAKEN, FORWARDED
+  remarks      String?
+  routeOrder   Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  @@index([documentId])
+  @@index([toUserId])
+}
+
+model DocumentReleaseLog {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  releasedById String?
+  releasedBy   User?    @relation(fields: [releasedById], references: [id])
+  receiverName String
+  receiverType String? // STAFF, TEACHER, PARENT, EXTERNAL
+  purpose      String?
+  dateReleased DateTime @default(now())
+  dateReturned DateTime?
+  status       String   @default("OUT") // OUT, RETURNED, LOST
+
+  @@index([documentId])
+  @@index([dateReleased])
+}
+
+// ============================================
+// AUDIT LOGS (System-wide)
+// ============================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entityType String
+  entityId  String?
+  details   Json?
+  performedById String?
+  performedBy User?  @relation("UserAuditLogs", fields: [performedById], references: [id])
+  ipAddress String?
+  timestamp DateTime @default(now())
+  createdAt DateTime @default(now())
+  resource  String?
+
+  @@index([entityType])
+  @@index([performedById])
+  @@index([timestamp])
+}
+
+model GradeWorkflowLog {
+  id          String             @id @default(cuid())
+  gradeId     String
+  grade       Grade              @relation(fields: [gradeId], references: [id], onDelete: Cascade)
+  fromStatus  GradeWorkflowStatus
+  toStatus    GradeWorkflowStatus
+  action      String
+  performedBy String
+  actor       User?              @relation("GradeWorkflowActor", fields: [performedBy], references: [id])
+  remarks     String?
+  createdAt   DateTime           @default(now())
+
+  @@index([gradeId])
+  @@index([performedBy])
+}
+
+// ============================================
+// SUPPORTING TABLES
+// ============================================
+
+model SchoolForm {
+  id            String        @id @default(cuid())
+  formType      SchoolFormType
+  academicYearId String
+  academicYear  AcademicYear  @relation(fields: [academicYearId], references: [id])
+  gradeLevel    GradeLevel
+  sectionId     String?
+  section       Section?      @relation(fields: [sectionId], references: [id])
+  quarter       Quarter?
+  generatedById String?
+  generatedBy   User?         @relation("SchoolFormGenerator", fields: [generatedById], references: [id])
+  fileUrl       String?       // Generated PDF file
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+
+  @@index([formType])
+  @@index([academicYearId])
+  @@index([sectionId])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  published Boolean  @default(true)
+  authorId  String?
+  author    User?    @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UploadedFile {
+  id           String   @id @default(cuid())
+  originalName String
+  fileName     String   @unique
+  filePath     String
+  fileSize     Int
+  mimeType     String
+  category     String
+  uploadedById String
+  uploadedBy   User     @relation("FileUploader", fields: [uploadedById], references: [id])
+  isPublic     Boolean  @default(false)
+  metadata     Json?
+  uploadedAt   DateTime @default(now())
+
+  @@index([uploadedById])
+  @@index([category])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String
+  recipient String
+  template  String
+  subject   String?
+  status    String
+  sentAt    DateTime?
+  sentById  String?
+  sentBy    User?    @relation("NotificationSender", fields: [sentById], references: [id])
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String
+  category    String
+  dataType    String
+  updatedById  String
+  updatedBy    User     @relation("SettingUpdater", fields: [updatedById], references: [id])
+  updatedAt   DateTime @updatedAt
+}
