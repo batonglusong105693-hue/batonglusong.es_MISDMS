@@ -67,6 +67,13 @@ export async function POST(request: Request) {
     }
 
     if (action === "delete") {
+      if (!hasPermission(session.user.role as Role, "backup:delete")) {
+        return forbiddenResponse("Insufficient permissions to delete backups", {
+          userId: session.user.id,
+          action: "POST",
+          resource: "/api/backups",
+        });
+      }
       const { backupId } = body;
       if (!isValidBackupId(backupId)) {
         return NextResponse.json({ error: "Invalid backup ID" }, { status: 400 });

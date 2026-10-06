@@ -89,7 +89,7 @@ export async function initializeGradeWorkflow(gradeId: string): Promise<void> {
       workflowStatus: "DRAFT",
       updatedAt: new Date(),
     },
-  }).catch(() => {});
+  });
 }
 
 export async function submitGradeForReview(
@@ -108,13 +108,14 @@ export async function submitGradeForReview(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.grade.update({
-      where: { id: gradeId },
+    const updated = await tx.grade.updateMany({
+      where: { id: gradeId, workflowStatus: grade.workflowStatus, locked: false },
       data: {
         workflowStatus: "SUBMITTED",
         updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) throw new Error("Grade status changed; refresh and try again");
 
     await tx.gradeWorkflowLog.create({
       data: {
@@ -125,7 +126,7 @@ export async function submitGradeForReview(
         performedBy: userId,
         remarks,
       },
-    }).catch(() => {});
+    });
   });
 }
 
@@ -148,13 +149,14 @@ export async function approveGradeForPosting(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.grade.update({
-      where: { id: gradeId },
+    const updated = await tx.grade.updateMany({
+      where: { id: gradeId, workflowStatus: "UNDER_REVIEW", locked: false },
       data: {
         workflowStatus: "APPROVED",
         updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) throw new Error("Grade status changed; refresh and try again");
 
     await tx.gradeWorkflowLog.create({
       data: {
@@ -165,7 +167,7 @@ export async function approveGradeForPosting(
         performedBy: userId,
         remarks,
       },
-    }).catch(() => {});
+    });
   });
 }
 
@@ -187,15 +189,22 @@ export async function rejectGrade(
   if (!rejectableStatuses.includes(grade.workflowStatus)) {
     throw new Error(`Cannot reject grade from ${grade.workflowStatus} status`);
   }
+  const allowedRoles = grade.workflowStatus === "APPROVED"
+    ? ["PRINCIPAL"]
+    : ["ADMIN_OFFICER", "PRINCIPAL"];
+  if (!allowedRoles.includes(userRole)) {
+    throw new Error("Insufficient permissions to reject grades");
+  }
 
   await prisma.$transaction(async (tx) => {
-    await tx.grade.update({
-      where: { id: gradeId },
+    const updated = await tx.grade.updateMany({
+      where: { id: gradeId, workflowStatus: grade.workflowStatus, locked: false },
       data: {
         workflowStatus: "REJECTED",
         updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) throw new Error("Grade status changed; refresh and try again");
 
     await tx.gradeWorkflowLog.create({
       data: {
@@ -206,7 +215,7 @@ export async function rejectGrade(
         performedBy: userId,
         remarks,
       },
-    }).catch(() => {});
+    });
   });
 }
 
@@ -229,14 +238,15 @@ export async function postGrade(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.grade.update({
-      where: { id: gradeId },
+    const updated = await tx.grade.updateMany({
+      where: { id: gradeId, workflowStatus: "APPROVED", locked: false },
       data: {
         workflowStatus: "POSTED",
         postedAt: new Date(),
         updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) throw new Error("Grade status changed; refresh and try again");
 
     await tx.gradeWorkflowLog.create({
       data: {
@@ -247,7 +257,7 @@ export async function postGrade(
         performedBy: userId,
         remarks,
       },
-    }).catch(() => {});
+    });
   });
 }
 
@@ -269,14 +279,16 @@ export async function finalizeGrade(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.grade.update({
-      where: { id: gradeId },
+    const updated = await tx.grade.updateMany({
+      where: { id: gradeId, workflowStatus: "POSTED", locked: false },
       data: {
         workflowStatus: "FINALIZED",
         finalizedAt: new Date(),
+        locked: true,
         updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) throw new Error("Grade status changed; refresh and try again");
 
     await tx.gradeWorkflowLog.create({
       data: {
@@ -286,7 +298,7 @@ export async function finalizeGrade(
         action: "FINALIZED",
         performedBy: userId,
       },
-    }).catch(() => {});
+    });
   });
 }
 
@@ -303,7 +315,7 @@ export async function getGradeWorkflowHistory(gradeId: string): Promise<GradeWor
       },
     },
     orderBy: { createdAt: "asc" },
-  }).catch(() => []);
+  });
 
   return logs.map((log) => ({
     id: log.id,
@@ -372,13 +384,18 @@ export async function bulkUpdateGradeStatus(
         continue;
       }
 
-      await prisma.grade.update({
-        where: { id: gradeId },
-        data: { workflowStatus: toStatus, updatedAt: new Date() },
-      });
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.grade.updateMany({
+          where: { id: gradeId, workflowStatus: fromStatus, locked: false },
+          data: {
+            workflowStatus: toStatus,
+            ...(toStatus === "FINALIZED" ? { finalizedAt: new Date(), locked: true } : {}),
+            updatedAt: new Date(),
+          },
+        });
+        if (updated.count !== 1) throw new Error("Grade status changed");
 
-      await prisma.gradeWorkflowLog
-        .create({
+        await tx.gradeWorkflowLog.create({
           data: {
             gradeId,
             fromStatus,
@@ -387,8 +404,8 @@ export async function bulkUpdateGradeStatus(
             performedBy: userId,
             remarks,
           },
-        })
-        .catch(() => {});
+        });
+      });
 
       success++;
     } catch (err) {

@@ -26,6 +26,32 @@ export interface BackupInfo {
 }
 
 const BACKUP_DIR = path.join(process.cwd(), "backups");
+const BACKUP_TABLES = [
+  "user",
+  "academicYear",
+  "subject",
+  "section",
+  "student",
+  "enrollment",
+  "grade",
+  "teachingLoad",
+  "attendanceRecord",
+  "document",
+  "documentVersion",
+  "documentAuditLog",
+  "documentRouteLog",
+  "documentReleaseLog",
+  "auditLog",
+  "gradeWorkflowLog",
+  "schoolForm",
+  "announcement",
+  "uploadedFile",
+  "notification",
+  "systemSetting",
+  "account",
+  "session",
+  "verificationToken",
+] as const;
 
 export async function initializeBackupDir(): Promise<void> {
   if (!fs.existsSync(BACKUP_DIR)) {
@@ -44,44 +70,35 @@ export async function createBackup(userId: string): Promise<BackupMetadata> {
     const recordCounts: Record<string, number> = {};
 
     // Backup all tables
-    const tables = [
-      "academicYear",
-      "section",
-      "student",
-      "user",
-      "enrollment",
-      "subject",
-      "grade",
-      "attendanceRecord",
-      "document",
-      "notification",
-      "auditLog",
-    ];
+    const tables = [...BACKUP_TABLES];
 
     for (const table of tables) {
       const model = (prisma as any)[table];
-      if (model) {
-        data[table] = await model.findMany();
-        recordCounts[table] = data[table].length;
-      }
+      if (!model) throw new Error(`Backup model is unavailable: ${table}`);
+      data[table] = await model.findMany();
+      recordCounts[table] = data[table].length;
     }
 
+    const timestamp = new Date();
+    const baseMetadata = {
+      id: backupId,
+      timestamp,
+      version: "1.0",
+      appVersion: "MISDMS-BLES v1.0",
+    };
+    const checksum = calculateChecksum(JSON.stringify({ metadata: baseMetadata, data }));
     const backupData = {
-      metadata: {
-        id: backupId,
-        timestamp: new Date(),
-        version: "1.0",
-        appVersion: "MISDMS-BLES v1.0",
-      },
+      metadata: { ...baseMetadata, checksum },
       data,
     };
 
     // Write backup
     const jsonContent = JSON.stringify(backupData, null, 2);
-    fs.writeFileSync(backupPath, jsonContent);
+    const temporaryPath = `${backupPath}.tmp`;
+    fs.writeFileSync(temporaryPath, jsonContent, { flag: "wx" });
+    fs.renameSync(temporaryPath, backupPath);
 
     const stats = fs.statSync(backupPath);
-    const checksum = calculateChecksum(jsonContent);
 
     const metadata: BackupMetadata = {
       id: backupId,
@@ -185,26 +202,39 @@ export async function getBackupDetails(backupId: string): Promise<any> {
 export async function restoreBackup(backupId: string, userId: string): Promise<void> {
   try {
     const backup = await getBackupDetails(backupId);
+    if (
+      !backup ||
+      backup.metadata?.id !== backupId ||
+      !backup.data ||
+      typeof backup.data !== "object" ||
+      !BACKUP_TABLES.every((table) => Array.isArray(backup.data[table])) ||
+      Object.keys(backup.data).some((table) => !BACKUP_TABLES.includes(table as (typeof BACKUP_TABLES)[number]))
+    ) {
+      throw new Error("Backup is incomplete or contains unsupported tables");
+    }
+
+    const { checksum, ...baseMetadata } = backup.metadata;
+    if (
+      typeof checksum !== "string" ||
+      calculateChecksum(JSON.stringify({ metadata: baseMetadata, data: backup.data })) !== checksum
+    ) {
+      throw new Error("Backup checksum verification failed");
+    }
 
     // Start transaction
     await prisma.$transaction(async (tx) => {
       // Delete children before parents so foreign-key constraints remain valid.
-      const tables = Object.keys(backup.data);
-
-      for (const table of [...tables].reverse()) {
+      for (const table of [...BACKUP_TABLES].reverse()) {
         const model = (tx as any)[table];
-        if (model) {
-          await model.deleteMany();
-        }
+        await model.deleteMany();
       }
 
       // Restore data
-      for (const [table, records] of Object.entries(backup.data)) {
+      for (const table of BACKUP_TABLES) {
+        const records = backup.data[table];
         const model = (tx as any)[table];
-        if (model && Array.isArray(records)) {
-          for (const record of records) {
-            await model.create({ data: record });
-          }
+        for (const record of records) {
+          await model.create({ data: record });
         }
       }
     });
@@ -245,7 +275,7 @@ export async function deleteBackup(backupId: string, userId: string): Promise<vo
         resource: `backup:${backupId}`,
         details: { message: "Backup deleted", userId },
       },
-    }).catch(() => {});
+    });
   } catch (err) {
     console.error("Backup deletion error:", err);
     throw new Error("Failed to delete backup");

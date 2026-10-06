@@ -36,8 +36,8 @@ async function seedAdminOnly() {
 }
 
 async function main() {
-  if (process.env.NODE_ENV === "production" && process.env.SEED_DATABASE !== "true") {
-    throw new Error("Refusing to run the seed script in production without SEED_DATABASE=true.");
+  if (process.env.NODE_ENV === "production" && process.env.SEED_ADMIN_ONLY !== "true") {
+    throw new Error("Refusing to create demo users in production. Use SEED_ADMIN_ONLY=true to create an administrator.");
   }
 
   if (process.env.SEED_ADMIN_ONLY === "true") {

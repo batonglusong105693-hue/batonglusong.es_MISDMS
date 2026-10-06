@@ -49,8 +49,9 @@ export default function GradeWorkflowPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const canManageWorkflow = session?.user?.role
-    ? hasPermission(session.user.role as Role, "grades:manage")
+    ? hasPermission(session.user.role as Role, "grade:workflow")
     : false;
+  const canBulkApprove = ["PRINCIPAL", "SUPER_ADMIN"].includes(session?.user?.role ?? "");
   const [view, setView] = useState<"pending" | "history">("pending");
   const [selectedStatus, setSelectedStatus] = useState<GradeStatus>("SUBMITTED");
   const [grades, setGrades] = useState<WorkflowGrade[]>([]);
@@ -172,7 +173,7 @@ export default function GradeWorkflowPage() {
     }
   }
 
-  async function handleBulkAction(action: string) {
+  async function handleBulkAction() {
     if (!canManageWorkflow) return;
     if (selectedGrades.size === 0) {
       setError("Please select at least one grade");
@@ -189,7 +190,8 @@ export default function GradeWorkflowPage() {
         body: JSON.stringify({
           action: "bulk_update",
           gradeIds: Array.from(selectedGrades),
-          toStatus: "UNDER_REVIEW",
+          fromStatus: "UNDER_REVIEW",
+          toStatus: "APPROVED",
           remarks: remarkText,
         }),
       });
@@ -312,13 +314,15 @@ export default function GradeWorkflowPage() {
                     {selectedGrades.size} grade(s) selected
                   </p>
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => handleBulkAction("approve")}
-                      disabled={actionInProgress === "bulk"}
-                      className="px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400"
-                    >
-                      Approve Selected
-                    </button>
+                    {canBulkApprove && selectedStatus === "UNDER_REVIEW" && (
+                      <button
+                        onClick={handleBulkAction}
+                        disabled={actionInProgress === "bulk"}
+                        className="px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400"
+                      >
+                        Approve Selected
+                      </button>
+                    )}
                     <button
                       onClick={() => setSelectedGrades(new Set())}
                       className="px-3 py-1 text-sm bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"

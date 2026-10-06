@@ -2,7 +2,7 @@
 
 **Last Updated:** August 23, 2026  
 **Version:** 1.0.0  
-**Status:** Production Ready
+**Status:** Production deployment requires completing the security and recovery checks below.
 
 ---
 
@@ -101,7 +101,7 @@ For a new Supabase project, apply the Prisma schema once from a trusted local ma
 
 1. Set `DATABASE_URL` to Supabase's pooled connection string and `DIRECT_URL` to its direct connection string.
 2. Run `npx prisma db push` once for the initial schema, or create a migration with `npx prisma migrate dev` and deploy it with `npx prisma migrate deploy`.
-3. Run `SEED_DATABASE=true npx tsx prisma/seed.ts` only when intentionally initializing an empty database.
+3. Run `SEED_DATABASE=true npx tsx prisma/seed.ts` only in a non-production environment when intentionally initializing an empty database. Production seeding is restricted to `SEED_ADMIN_ONLY=true` with an explicitly supplied administrator password.
 4. Run `npm run build` before deploying.
 
 To create only a super-admin account, run the same seed script with `SEED_ADMIN_ONLY=true` and provide `SEED_ADMIN_NAME`, `SEED_ADMIN_EMAIL`, and `SEED_ADMIN_PASSWORD` (at least 12 characters). This mode does not create demo users or sample records, and it leaves an existing account with that email unchanged. Do not use the default demo seed if you only want an administrator.
@@ -109,6 +109,10 @@ To create only a super-admin account, run the same seed script with `SEED_ADMIN_
 Do not run the seed command automatically on every Vercel build. Do not use `SEED_DATABASE_FORCE=true` in production.
 
 The seed is idempotent for redeployments: once users exist, later deployments skip the demo data instead of deleting live records. Do not set `SEED_DATABASE_FORCE=true` on a production project because it intentionally recreates demo records and can overwrite the database flow.
+
+The backup feature currently writes files to the application's local `backups` directory. That storage is not durable or shared across serverless instances, so it is not a production disaster-recovery solution. Before relying on backups in production, configure protected persistent/object storage and test restoration from that storage.
+
+`prisma/enable-rls.sql` enables row-level security but does not create policies. It is not, by itself, a database authorization policy; access controls must be enforced by the application or by separately reviewed database policies.
 
 ### 4. Application URLs
 

@@ -119,6 +119,20 @@ export async function POST(request: Request) {
   if (!title || !category) {
     return badRequestResponse("Title and category are required");
   }
+  if (typeof title !== "string" || !title.trim()) {
+    return badRequestResponse("Title must be a non-empty string");
+  }
+  if (isConfidential !== undefined && typeof isConfidential !== "boolean") {
+    return badRequestResponse("Confidential flag must be a boolean");
+  }
+  if (fileSize !== undefined && fileSize !== null &&
+      (typeof fileSize !== "number" || !Number.isSafeInteger(fileSize) || fileSize < 0)) {
+    return badRequestResponse("File size must be a non-negative integer");
+  }
+  if (fileUrl !== undefined && fileUrl !== null &&
+      (typeof fileUrl !== "string" || !fileUrl.trim())) {
+    return badRequestResponse("File URL must be a non-empty string or null");
+  }
 
   if (!documentCategories.includes(category)) {
     return badRequestResponse("Invalid document category");
@@ -133,34 +147,49 @@ export async function POST(request: Request) {
     delete documentMetadata.customCategory;
   }
 
-  const document = await prisma.document.create({
-    data: {
-      title,
-      description,
-      category,
-      referenceNumber,
-      sender,
-      recipient,
-      isConfidential: isConfidential || false,
-      tags: tags || null,
-      metadata: Object.keys(documentMetadata).length ? documentMetadata : null,
-      fileUrl: typeof fileUrl === "string" ? fileUrl : null,
-      fileType: typeof fileType === "string" ? fileType : null,
-      fileSize: typeof fileSize === "number" ? fileSize : null,
-      fileName: typeof fileName === "string" ? fileName : null,
-      uploadedById: session.user.id,
-      createdById: session.user.id,
-      status: "PENDING_REVIEW",
-    },
-  });
+  const document = await prisma.$transaction(async (transaction) => {
+    const created = await transaction.document.create({
+      data: {
+        title: title.trim(),
+        description,
+        category,
+        referenceNumber,
+        sender,
+        recipient,
+        isConfidential: isConfidential ?? false,
+        tags: tags || null,
+        metadata: Object.keys(documentMetadata).length ? documentMetadata : null,
+        fileUrl: typeof fileUrl === "string" ? fileUrl.trim() : null,
+        fileType: typeof fileType === "string" ? fileType : null,
+        fileSize: typeof fileSize === "number" ? fileSize : null,
+        fileName: typeof fileName === "string" ? fileName : null,
+        uploadedById: session.user.id,
+        createdById: session.user.id,
+        status: "PENDING_REVIEW",
+      },
+    });
+    if (typeof fileUrl === "string" && fileUrl.trim()) {
+      await transaction.documentVersion.create({
+        data: {
+          documentId: created.id,
+          version: created.version,
+          fileUrl: fileUrl.trim(),
+          fileSize: typeof fileSize === "number" ? fileSize : null,
+          changes: "Initial upload",
+          uploadedById: session.user.id,
+        },
+      });
+    }
 
-  await prisma.documentAuditLog.create({
-    data: {
-      documentId: document.id,
-      action: "CREATED",
-      performedById: session.user.id,
-      details: `Document "${title}" created`,
-    },
+    await transaction.documentAuditLog.create({
+      data: {
+        documentId: created.id,
+        action: "CREATED",
+        performedById: session.user.id,
+        details: `Document "${title.trim()}" created`,
+      },
+    });
+    return created;
   });
 
   return NextResponse.json(document, { status: 201 });
@@ -198,6 +227,15 @@ export async function PATCH(request: Request) {
   if (updates.isConfidential !== undefined && typeof updates.isConfidential !== "boolean") {
     return badRequestResponse("Confidential flag must be a boolean");
   }
+  if (updates.fileUrl !== undefined &&
+      updates.fileUrl !== null &&
+      (typeof updates.fileUrl !== "string" || !updates.fileUrl.trim())) {
+    return badRequestResponse("File URL must be a non-empty string or null");
+  }
+  if (updates.fileSize !== undefined && updates.fileSize !== null &&
+      (typeof updates.fileSize !== "number" || !Number.isSafeInteger(updates.fileSize) || updates.fileSize < 0)) {
+    return badRequestResponse("File size must be a non-negative integer");
+  }
 
   const allowedFields = ["title", "description", "category", "referenceNumber", "sender", "recipient", "isConfidential", "tags", "metadata", "fileUrl", "fileType", "fileSize", "fileName"];
   const filteredUpdates: Record<string, unknown> = {};
@@ -206,24 +244,77 @@ export async function PATCH(request: Request) {
     if (allowedFields.includes(key)) {
       filteredUpdates[key] = value;
     }
+    if (typeof filteredUpdates.fileUrl === "string") {
+      filteredUpdates.fileUrl = filteredUpdates.fileUrl.trim();
+    }
   }
 
   if (Object.keys(filteredUpdates).length === 0) {
     return badRequestResponse("No valid fields provided for update");
   }
 
-  const updatedDocument = await prisma.document.update({
-    where: { id },
-    data: filteredUpdates,
-  });
+  if (filteredUpdates.title !== undefined &&
+      (typeof filteredUpdates.title !== "string" || !filteredUpdates.title.trim())) {
+    return badRequestResponse("Title must be a non-empty string");
+  }
+  const fileChanged = filteredUpdates.fileUrl !== undefined &&
+    filteredUpdates.fileUrl !== document.fileUrl;
+  const nextFileUrl = fileChanged
+    ? filteredUpdates.fileUrl
+    : document.fileUrl;
+  if (fileChanged && typeof nextFileUrl !== "string") {
+    return badRequestResponse("A new file URL is required to create a document version");
+  }
+  if (fileChanged) {
+    filteredUpdates.version = document.version + 1;
+  }
 
-  await prisma.documentAuditLog.create({
-    data: {
-      documentId: document.id,
-      action: "UPDATED",
-      performedById: session.user.id,
-      details: `Document updated: ${Object.keys(filteredUpdates).join(", ")}`,
-    },
+  const updatedDocument = await prisma.$transaction(async (transaction) => {
+    if (fileChanged && document.fileUrl) {
+      const existingVersions = await transaction.documentVersion.count({
+        where: { documentId: document.id },
+      });
+      if (existingVersions === 0) {
+        await transaction.documentVersion.create({
+          data: {
+            documentId: document.id,
+            version: document.version,
+            fileUrl: document.fileUrl,
+            fileSize: document.fileSize,
+            changes: "Version history initialized",
+            uploadedById: session.user.id,
+          },
+        });
+      }
+    }
+    const updated = await transaction.document.update({
+      where: { id },
+      data: filteredUpdates,
+    });
+    if (fileChanged && typeof nextFileUrl === "string") {
+      await transaction.documentVersion.create({
+        data: {
+          documentId: document.id,
+          version: document.version + 1,
+          fileUrl: nextFileUrl,
+          fileSize: typeof filteredUpdates.fileSize === "number"
+            ? filteredUpdates.fileSize
+            : document.fileSize,
+          changes: "File updated",
+          uploadedById: session.user.id,
+        },
+      });
+    }
+
+    await transaction.documentAuditLog.create({
+      data: {
+        documentId: document.id,
+        action: "UPDATED",
+        performedById: session.user.id,
+        details: `Document updated: ${Object.keys(filteredUpdates).join(", ")}`,
+      },
+    });
+    return updated;
   });
 
   return NextResponse.json(updatedDocument);

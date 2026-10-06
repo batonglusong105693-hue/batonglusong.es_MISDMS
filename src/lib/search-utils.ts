@@ -12,6 +12,11 @@ export interface SearchOptions {
   sort?: { field: string; order: "asc" | "desc" };
   skip?: number;
   take?: number;
+  accessScope?: {
+    sectionIds?: string[];
+    teachingLoads?: Array<{ sectionId: string; subjectId: string }>;
+    excludeConfidentialDocuments?: boolean;
+  };
 }
 
 export interface SearchResult<T> {
@@ -31,37 +36,29 @@ const SEARCHABLE_FIELDS: Record<string, string[]> = {
 };
 
 const FILTERABLE_FIELDS: Record<string, Record<string, string>> = {
-  students: {
-    status: "string",
-    gender: "string",
-    gradeLevel: "string",
-    createdAt: "date",
-  },
+  students: { status: "string", gender: "string", createdAt: "date" },
   faculty: {
     role: "string",
     department: "string",
     status: "string",
   },
-  grades: {
-    quarter: "string",
-    status: "string",
-  },
-  sections: {
-    gradeLevel: "string",
-    academicYearId: "string",
-  },
-  documents: {
-    category: "string",
-    status: "string",
-  },
+  grades: { workflowStatus: "string", finalGrade: "number" },
+  attendance: { status: "string", date: "date", studentId: "string" },
+  enrollments: { status: "string", sectionId: "string", academicYearId: "string" },
+  documents: { category: "string", status: "string", createdAt: "date" },
 };
 
 export async function searchStudents(
   options: SearchOptions
 ): Promise<SearchResult<any>> {
-  const { query = "", filters = [], sort = { field: "lastName", order: "asc" }, skip = 0, take = 20 } = options;
+  const { query = "", filters = [], sort = { field: "lastName", order: "asc" }, skip = 0, take = 20, accessScope } = options;
 
   const where: any = {};
+  if (accessScope?.sectionIds) {
+    where.enrollments = {
+      some: { status: "ENROLLED", sectionId: { in: accessScope.sectionIds } },
+    };
+  }
 
   // Text search
   if (query) {
@@ -88,12 +85,8 @@ export async function searchStudents(
         id: true,
         lrn: true,
         firstName: true,
-        middleName: true,
         lastName: true,
         gender: true,
-        birthDate: true,
-        address: true,
-        email: true,
         status: true,
         createdAt: true,
         enrollments: {
@@ -172,9 +165,41 @@ export async function searchFaculty(
 export async function searchGrades(
   options: SearchOptions
 ): Promise<SearchResult<any>> {
-  const { query = "", filters = [], sort = { field: "createdAt", order: "desc" }, skip = 0, take = 20 } = options;
+  const { query = "", filters = [], sort = { field: "createdAt", order: "desc" }, skip = 0, take = 20, accessScope } = options;
 
   const where: any = {};
+  if (accessScope?.teachingLoads) {
+    where.OR = accessScope.teachingLoads.length
+      ? accessScope.teachingLoads.map(({ sectionId, subjectId }) => ({
+          subjectId,
+          enrollment: { sectionId },
+        }))
+      : [{ id: "__no_assigned_grades__" }];
+  } else if (accessScope?.sectionIds) {
+    where.enrollment = { sectionId: { in: accessScope.sectionIds } };
+  }
+
+  if (query) {
+    where.AND = [
+      ...(where.OR ? [{ OR: where.OR }] : []),
+      {
+        OR: [
+          { subject: { name: { contains: query, mode: "insensitive" } } },
+          {
+            enrollment: {
+              student: {
+                OR: [
+                  { firstName: { contains: query, mode: "insensitive" } },
+                  { lastName: { contains: query, mode: "insensitive" } },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ];
+    delete where.OR;
+  }
 
   // Apply filters
   for (const filter of filters) {
@@ -183,54 +208,42 @@ export async function searchGrades(
 
   const [data, total] = await Promise.all([
     prisma.grade.findMany({
-      where,
-      skip,
-      take,
-      orderBy: { [sort.field]: sort.order },
-      include: {
-        enrollment: {
-          select: {
-            student: { select: { firstName: true, lastName: true, lrn: true } },
+        where,
+        skip,
+        take,
+        orderBy: { [sort.field]: sort.order },
+        include: {
+          enrollment: {
+            select: {
+              student: { select: { firstName: true, lastName: true, lrn: true } },
+            },
           },
+          subject: { select: { name: true } },
         },
-        subject: { select: { name: true } },
-      },
-    }),
+      }),
     prisma.grade.count({ where }),
   ]);
 
-  // Filter by query if provided
-  const filtered =
-    query && query.length > 0
-      ? data.filter(
-          (g) =>
-            g.subject.name.toLowerCase().includes(query.toLowerCase()) ||
-            `${g.enrollment.student.firstName} ${g.enrollment.student.lastName}`
-              .toLowerCase()
-              .includes(query.toLowerCase())
-        )
-      : data;
-
   return {
-    data: filtered,
-    total: filtered.length,
+    data,
+    total,
     page: Math.floor(skip / take) + 1,
     pageSize: take,
-    totalPages: Math.ceil(filtered.length / take),
+    totalPages: Math.ceil(total / take),
   };
 }
 
 export async function searchAttendance(
   options: SearchOptions
 ): Promise<SearchResult<any>> {
-  const { filters = [], sort = { field: "date", order: "desc" }, skip = 0, take = 20 } = options;
+  const { filters = [], sort = { field: "date", order: "desc" }, skip = 0, take = 20, accessScope } = options;
 
   const where: any = {};
 
   // Apply filters
   for (const filter of filters) {
     if (filter.field === "studentId") {
-      where.enrollment = { studentId: filter.value };
+      where.enrollment = { ...where.enrollment, studentId: filter.value };
     } else if (filter.field === "status") {
       where.status = filter.value;
     } else if (filter.field === "date") {
@@ -241,6 +254,12 @@ export async function searchAttendance(
         };
       }
     }
+  }
+  if (accessScope?.sectionIds) {
+    where.enrollment = {
+      ...where.enrollment,
+      sectionId: { in: accessScope.sectionIds },
+    };
   }
 
   const [data, total] = await Promise.all([
@@ -272,7 +291,7 @@ export async function searchAttendance(
 export async function searchEnrollments(
   options: SearchOptions
 ): Promise<SearchResult<any>> {
-  const { query = "", filters = [], sort = { field: "createdAt", order: "desc" }, skip = 0, take = 20 } = options;
+  const { query = "", filters = [], sort = { field: "createdAt", order: "desc" }, skip = 0, take = 20, accessScope } = options;
 
   const where: any = {};
 
@@ -295,6 +314,12 @@ export async function searchEnrollments(
   // Apply filters
   for (const filter of filters) {
     applyFilter(where, filter);
+  }
+  if (accessScope?.sectionIds) {
+    where.AND = [
+      ...(where.AND || []),
+      { sectionId: { in: accessScope.sectionIds } },
+    ];
   }
 
   const [data, total] = await Promise.all([
@@ -323,9 +348,11 @@ export async function searchEnrollments(
 export async function searchDocuments(
   options: SearchOptions
 ): Promise<SearchResult<any>> {
-  const { query = "", filters = [], sort = { field: "createdAt", order: "desc" }, skip = 0, take = 20 } = options;
+  const { query = "", filters = [], sort = { field: "createdAt", order: "desc" }, skip = 0, take = 20, accessScope } = options;
 
-  const where: any = {};
+  const where: any = accessScope?.excludeConfidentialDocuments
+    ? { isConfidential: false }
+    : {};
 
   // Text search
   if (query) {
@@ -377,7 +404,7 @@ export async function getFilterOptions(
   for (const [field, type] of Object.entries(fields)) {
     if (resource === "students") {
       if (field === "status") {
-        options.status = ["ACTIVE", "INACTIVE", "TRANSFERRED", "GRADUATED"];
+        options.status = ["ENROLLED", "TRANSFERRED_OUT", "DROPPED_OUT", "GRADUATED", "ALUMNI"];
       } else if (field === "gender") {
         options.gender = ["MALE", "FEMALE"];
       } else if (field === "gradeLevel") {
@@ -391,7 +418,7 @@ export async function getFilterOptions(
       if (field === "role") {
         options.role = ["TEACHER", "ADVISER", "ADMIN_OFFICER", "ADMIN_SUPPORT"];
       } else if (field === "status") {
-        options.status = ["ACTIVE", "INACTIVE", "ON_LEAVE"];
+        options.status = ["ACTIVE", "INACTIVE", "SUSPENDED"];
       } else if (field === "department") {
         const depts = await prisma.user.findMany({
           distinct: ["department"],
@@ -401,20 +428,31 @@ export async function getFilterOptions(
         options.department = depts.map((d) => d.department).filter(Boolean);
       }
     } else if (resource === "grades") {
-      if (field === "quarter") {
-        options.quarter = ["FIRST", "SECOND", "THIRD", "FOURTH"];
-      } else if (field === "status") {
-        options.status = ["DRAFT", "POSTED", "FINALIZED"];
+      if (field === "workflowStatus") {
+        options.workflowStatus = ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "POSTED", "FINALIZED"];
+      }
+    } else if (resource === "attendance") {
+      if (field === "status") {
+        options.status = ["PRESENT", "ABSENT", "LATE", "EXCUSED"];
+      }
+    } else if (resource === "enrollments") {
+      if (field === "status") {
+        options.status = ["PENDING", "ENROLLED", "TRANSFERRED", "DROPPED", "COMPLETED"];
       }
     } else if (resource === "documents") {
       if (field === "category") {
         options.category = [
-          "SYLLABUS",
-          "ASSIGNMENT",
-          "EXAM",
-          "CERTIFICATE",
-          "REPORT",
-          "OTHER",
+          "ADMINISTRATIVE_ISSUANCE",
+          "DEPED_ORDER",
+          "DEPED_MEMORANDUM",
+          "STUDENT_RECORD",
+          "FINANCIAL_MOOE",
+          "PROCUREMENT",
+          "INVENTORY",
+          "LESSON_PLAN",
+          "SCHOOL_FORM",
+          "CORRESPONDENCE",
+          "MISCELLANEOUS",
         ];
       }
     }

@@ -152,9 +152,10 @@ export async function POST(request: Request) {
   }
 
   // Create or update attendance records
-  const createdRecords = await Promise.all(
-    records.map((record: any) =>
-      prisma.attendanceRecord.upsert({
+  const createdRecords = await prisma.$transaction(async (transaction) => {
+    const saved = await Promise.all(
+      records.map((record: any) =>
+        transaction.attendanceRecord.upsert({
         where: {
           enrollmentId_date_quarter: {
             enrollmentId: record.enrollmentId,
@@ -180,9 +181,20 @@ export async function POST(request: Request) {
           student: { select: { lrn: true, firstName: true, lastName: true } },
           recordedBy: { select: { name: true } },
         },
-      })
-    )
-  );
+        })
+      )
+    );
+    await transaction.auditLog.create({
+      data: {
+        action: "ATTENDANCE_RECORDED",
+        entityType: "ATTENDANCE",
+        entityId: sectionId,
+        performedById: session.user.id,
+        details: { date: dateObj.toISOString(), count: saved.length },
+      },
+    });
+    return saved;
+  });
 
   return NextResponse.json(
     { success: true, count: createdRecords.length, records: createdRecords },
@@ -235,17 +247,29 @@ export async function PATCH(request: Request) {
     }
   }
 
-  const updated = await prisma.attendanceRecord.update({
-    where: { id },
-    data: {
-      status,
-      remarks: remarks || null,
-      recordedById: session.user.id,
-    },
-    include: {
-      student: { select: { lrn: true, firstName: true, lastName: true } },
-      recordedBy: { select: { name: true } },
-    },
+  const updated = await prisma.$transaction(async (transaction) => {
+    const saved = await transaction.attendanceRecord.update({
+      where: { id },
+      data: {
+        status,
+        remarks: remarks || null,
+        recordedById: session.user.id,
+      },
+      include: {
+        student: { select: { lrn: true, firstName: true, lastName: true } },
+        recordedBy: { select: { name: true } },
+      },
+    });
+    await transaction.auditLog.create({
+      data: {
+        action: "ATTENDANCE_UPDATED",
+        entityType: "ATTENDANCE",
+        entityId: id,
+        performedById: session.user.id,
+        details: { status },
+      },
+    });
+    return saved;
   });
 
   return NextResponse.json(updated);

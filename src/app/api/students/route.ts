@@ -99,18 +99,30 @@ export async function POST(request: Request) {
     return conflictResponse("LRN already exists");
   }
 
-  const student = await prisma.student.create({
-    data: {
-      lrn,
-      firstName,
-      middleName: middleName || null,
-      lastName,
-      extensionName: extensionName || null,
-      gender,
-      birthDate: birthDateObj,
-      address,
-      createdById: session.user.id,
-    },
+  const student = await prisma.$transaction(async (transaction) => {
+    const created = await transaction.student.create({
+      data: {
+        lrn,
+        firstName,
+        middleName: middleName || null,
+        lastName,
+        extensionName: extensionName || null,
+        gender,
+        birthDate: birthDateObj,
+        address,
+        createdById: session.user.id,
+      },
+    });
+    await transaction.auditLog.create({
+      data: {
+        action: "STUDENT_CREATED",
+        entityType: "STUDENT",
+        entityId: created.id,
+        performedById: session.user.id,
+        details: { lrn: created.lrn },
+      },
+    });
+    return created;
   });
 
   return NextResponse.json(student, { status: 201 });
@@ -161,9 +173,21 @@ export async function PATCH(request: Request) {
     return badRequestResponse("No valid fields provided for update");
   }
 
-  const student = await prisma.student.update({
-    where: { id },
-    data: { ...updateData, updatedById: session.user.id },
+  const student = await prisma.$transaction(async (transaction) => {
+    const updated = await transaction.student.update({
+      where: { id },
+      data: { ...updateData, updatedById: session.user.id },
+    });
+    await transaction.auditLog.create({
+      data: {
+        action: "STUDENT_UPDATED",
+        entityType: "STUDENT",
+        entityId: id,
+        performedById: session.user.id,
+        details: { fields: Object.keys(updateData) },
+      },
+    });
+    return updated;
   });
 
   return NextResponse.json(student);

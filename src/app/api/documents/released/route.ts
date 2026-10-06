@@ -15,7 +15,9 @@ export async function GET() {
     });
   }
 
+  const isPrivileged = ["SUPER_ADMIN", "PRINCIPAL", "ADMIN_OFFICER"].includes(session.user.role);
   const logs = await prisma.documentReleaseLog.findMany({
+    where: isPrivileged ? undefined : { document: { isConfidential: false } },
     orderBy: { dateReleased: "desc" },
     take: 50,
     include: {
@@ -25,5 +27,5 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json(logs.filter((log) => !log.document.isConfidential));
+  return NextResponse.json(logs);
 }
