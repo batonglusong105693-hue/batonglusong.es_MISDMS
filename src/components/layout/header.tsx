@@ -2,12 +2,17 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { Search, Bell, Settings } from "lucide-react";
 import { SuperadminSettingsModal } from "@/components/settings/superadmin-settings";
+import { hasPermission, type Role } from "@/lib/permissions";
 
 export function Header() {
   const { data: session } = useSession();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const canViewAlerts = session?.user?.role
+    ? hasPermission(session.user.role as Role, "alerts:view")
+    : false;
 
   return (
     <>
@@ -35,10 +40,16 @@ export function Header() {
             Settings
           </button>
         )}
-        <button className="relative rounded-md p-2 text-slate-500 hover:bg-slate-100" title="Notifications">
-          <Bell className="h-5 w-5" />
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
-        </button>
+        {canViewAlerts && (
+          <Link
+            href="/alerts"
+            aria-label="View alerts and notifications"
+            title="Notifications"
+            className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          >
+            <Bell className="h-5 w-5" aria-hidden="true" />
+          </Link>
+        )}
       </header>
 
       {session?.user?.role === "SUPER_ADMIN" && (

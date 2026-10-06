@@ -1,11 +1,48 @@
+import "dotenv/config";
 import { PrismaClient, type GradeLevel, type DocumentCategory, type DocumentStatus } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+async function seedAdminOnly() {
+  const name = process.env.SEED_ADMIN_NAME?.trim();
+  const email = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.SEED_ADMIN_PASSWORD;
+
+  if (!name || !email || !password) {
+    throw new Error("SEED_ADMIN_NAME, SEED_ADMIN_EMAIL, and SEED_ADMIN_PASSWORD are required for admin-only seeding.");
+  }
+
+  if (password.length < 12) {
+    throw new Error("SEED_ADMIN_PASSWORD must be at least 12 characters long.");
+  }
+
+  const admin = await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: {
+      name,
+      email,
+      password: await bcrypt.hash(password, 12),
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      department: "School Administration",
+      position: "System Administrator",
+    },
+    select: { name: true, email: true, role: true },
+  });
+
+  console.log(`Admin-only seed complete: ${admin.name} <${admin.email}> (${admin.role}).`);
+}
+
 async function main() {
   if (process.env.NODE_ENV === "production" && process.env.SEED_DATABASE !== "true") {
     throw new Error("Refusing to run the seed script in production without SEED_DATABASE=true.");
+  }
+
+  if (process.env.SEED_ADMIN_ONLY === "true") {
+    await seedAdminOnly();
+    return;
   }
 
   console.log("🌱 Seeding Batong Lusong Elementary School database...");

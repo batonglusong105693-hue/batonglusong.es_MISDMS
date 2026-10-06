@@ -104,6 +104,8 @@ For a new Supabase project, apply the Prisma schema once from a trusted local ma
 3. Run `SEED_DATABASE=true npx tsx prisma/seed.ts` only when intentionally initializing an empty database.
 4. Run `npm run build` before deploying.
 
+To create only a super-admin account, run the same seed script with `SEED_ADMIN_ONLY=true` and provide `SEED_ADMIN_NAME`, `SEED_ADMIN_EMAIL`, and `SEED_ADMIN_PASSWORD` (at least 12 characters). This mode does not create demo users or sample records, and it leaves an existing account with that email unchanged. Do not use the default demo seed if you only want an administrator.
+
 Do not run the seed command automatically on every Vercel build. Do not use `SEED_DATABASE_FORCE=true` in production.
 
 The seed is idempotent for redeployments: once users exist, later deployments skip the demo data instead of deleting live records. Do not set `SEED_DATABASE_FORCE=true` on a production project because it intentionally recreates demo records and can overwrite the database flow.
