@@ -23,14 +23,14 @@ export default function GlobalError({
           This page could not load because the application or its database connection is temporarily unavailable.
         </p>
 
-        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-left text-sm text-slate-700">
+        {/* <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-left text-sm text-slate-700">
           <p className="font-medium text-slate-900">What to check:</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             <li>Supabase database is running and reachable.</li>
             <li>Environment variables are set in Vercel.</li>
             <li>NextAuth secrets and database URLs are valid.</li>
           </ul>
-        </div>
+        </div> */}
 
         <button
           type="button"
