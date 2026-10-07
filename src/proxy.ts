@@ -24,6 +24,13 @@ export default withAuth(
     const role = token.role as string;
     const roleConfig = rolePermissions[role];
 
+    if (
+      role === "SUPER_ADMIN" &&
+      (pathname === "/my-students" || pathname.startsWith("/my-students/"))
+    ) {
+      return NextResponse.redirect(new URL("/unauthorized", req.url));
+    }
+
     if (role === "SUPER_ADMIN") {
       return NextResponse.next();
     }

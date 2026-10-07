@@ -35,8 +35,10 @@ export function Sidebar() {
   const roleConfig = rolePermissions[role];
   if (!roleConfig) return null;
 
-  const canAccess = (href: string) =>
-    role === "SUPER_ADMIN" || roleConfig.routes.some((r) => href === r || href.startsWith(r + "/"));
+  const canAccess = (href: string) => {
+    if (role === "SUPER_ADMIN" && href === "/my-students") return false;
+    return role === "SUPER_ADMIN" || roleConfig.routes.some((r) => href === r || href.startsWith(r + "/"));
+  };
 
   const handleSignOut = async () => {
     await signOut({ redirect: false });
